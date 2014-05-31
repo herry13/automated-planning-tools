@@ -7,6 +7,8 @@ cgGraph - generating a graphic of given causal-graph
 author: Herry (herry13@gmail.com)
 
 requirement:
+- networkx (python)
+- pygraphviz (python)
 - graphviz
 
 The causal graph is in the format of: http://www.fast-downward.org/TranslatorOutputFormat
@@ -222,7 +224,8 @@ def process(sasfile, pdffile):
 			      + str(indegrees[node]) + "," + str(outdegrees[node]) \
 			      + "," + str(variables[int(node)]))
 	graph_to_pdf(G2, 'cyclic.pdf', False)
-
+	
+	#G2 = G
 	indegrees = G2.in_degree()
 	w = max(indegrees.values())
 	# remove edges whose weight is the maximum
