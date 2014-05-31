@@ -51,6 +51,7 @@ either expressed or implied, of the FreeBSD Project.
 import os
 import sys
 import subprocess
+import networkx as nx
 
 usage = '''usage: cggraph.py <sas-file> <pdf-file>
 '''
@@ -73,17 +74,19 @@ def process(sasfile, pdffile):
 	def process_variable(f):
 		total = int(f.readline())
 		variables = []
+		names = []
 		for i in range(0,total):
 			if f.readline().strip() != "begin_variable":
 				raise ParseException("missing: begin_variable")
-			name = f.readline().strip() # name
+			names.append(f.readline().strip()) # name
 			f.readline() # axiom variable (1) or not (-1)
 			nvalues = int(f.readline()) # total values
 			values = [f.readline().strip() for j in range(0,nvalues)]
 			variables.append(nvalues)
 			if f.readline().strip() != 'end_variable':
 				raise ParseException("missing: end_variable")
-		return variables
+		yield variables
+		yield names
 
 	def process_mutex(f):
 		total = int(f.readline())
@@ -157,30 +160,80 @@ def process(sasfile, pdffile):
 						edges[key] = edges[key] + 1 if key in edges else 1
 		return edges
 
+	def graph_to_pdf(G, outfile, remove_dot=True):
+		nx.write_dot(G, outfile + ".dot")
+		subprocess.call(['dot', '-Tpdf', '-o', outfile, outfile + ".dot"])
+		if remove_dot:
+			os.remove(outfile + ".dot")
+
+
+	# create an empty graph
+	G = nx.DiGraph()
+
 	# parse SAS file
 	with open(sasfile) as f:
 		process_version(f)
 		process_metric(f)
-		variables = process_variable(f)
+		variables, names = process_variable(f)
 		process_mutex(f)
 		init = process_state(f, len(variables))
 		goal = process_goal(f)
 		operators = process_operator(f)
 
+	# compute directed edges (causal-links) between variables
 	edges = generate_edges(variables, operators)
-	# generate DOT file
-	dot = "strict digraph {\n"
+
+	# add nodes to graph
+	for i in range(0,len(variables)):
+		G.add_node(i, {'size': variables[i], 'label': names[i]})
+	# add edges to graph
 	for edge in edges.keys():
 		_from, _to = edge.split('-')
-		dot += "  " + _from + " -> " + _to + " [weight=" + str(edges[edge]) + "];\n"
-	dot += '''}'''
+		G.add_edge(_from, _to, {'weight': edges[edge]})
 
-	# generate graph
-	dotfile = pdffile + '.dot'
-	with open(dotfile, 'w') as f:
-		f.write(dot)
-	subprocess.call(['dot', '-Tpdf', '-o', pdffile, dotfile])
-	os.remove(dotfile)
+	# generate graph file
+	graph_to_pdf(G, pdffile)
+
+	'''# remove nodes without edges
+	G1 = nx.DiGraph()
+	indegrees = G.in_degree()
+	outdegrees = G.out_degree()
+	for node in G.nodes():
+		if indegrees[node] > 0 or outdegrees[node] > 0:
+			G1.add_node(node)
+	G1.add_edges_from(G.edges())
+	graph_to_pdf(G1, 'withedges.pdf', False)
+
+	# remove acyclic edges
+	G2 = nx.DiGraph()
+	G2.add_nodes_from(G1.nodes())
+	G2.add_edges_from(G1.edges())
+	for node in G2.nodes():
+		for successor in G2.successors(node):
+			if not G2.has_edge(successor, node):
+				G2.remove_edge(node, successor)
+	indegrees = G2.in_degree()
+	outdegrees = G2.out_degree()
+	for node in indegrees.keys():
+		if indegrees[node] <= 0:
+			G2.remove_node(node)
+		else:
+			print(str(node) + " " + names[int(node)] + " - " \
+			      + str(indegrees[node]) + "," + str(outdegrees[node]) \
+			      + "," + str(variables[int(node)]))
+	graph_to_pdf(G2, 'cyclic.pdf', False)
+
+	indegrees = G2.in_degree()
+	w = max(indegrees.values())
+	# remove edges whose weight is the maximum
+	G3 = nx.DiGraph()
+	G3.add_nodes_from(G2.nodes())
+	G3.add_edges_from(G2.edges())
+	for node in indegrees.keys():
+		if indegrees[node] == w:
+			G3.remove_node(node)
+	graph_to_pdf(G3, 'no_max_indegrees.pdf')'''
+
 
 def graphviz_exist():
 	p = subprocess.Popen(['which', 'dot'], stdout=subprocess.PIPE)
