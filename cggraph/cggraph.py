@@ -9,6 +9,9 @@ author: Herry (herry13@gmail.com)
 requirement:
 - graphviz
 
+The causal graph is in the format of: http://www.fast-downward.org/TranslatorOutputFormat
+Note that mutexes and axioms are ignored.
+
 Changelog:
 31.05.2014 - first release
 
