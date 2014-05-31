@@ -1,4 +1,7 @@
-automated-planning-tools
-========================
+# Automated Planning Tools
 
-experimental tools for automated planning
+Author: Herry (herry13@gmail.com)
+
+A collection of experimental tools for automated planning.
+
+- [cggraph](cggraph) - generating a graphic of given causal-graph
