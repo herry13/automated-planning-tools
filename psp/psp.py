@@ -13,38 +13,60 @@ Requirements:
 import sys
 
 class Operator(object):
-	'''
-	@param name operator's name
-	'''
 	def __init__(self, name):
 		self.name = name
 		self.cost = 0
 		self.pre = {}
 		self.post = {}
 
-	'''def __clone__(self):
-		op = Operator(self.name)
-		op.cost = self.cost
-		for k, v in self.pre.iteritems():
-			op[k] = v
-		for k, v in self.post.iteritems():
-			op[k] = v
-		return op'''
-
 	def __str__(self):
-		return self.name + " " + str(self.pre)
+		return self.name #+ " " + str(self.pre) + " " + str(self.post)
 
-	def __repr(self):
+	def __repr__(self):
 		return self.__str__()
 
-	def support(self, goals):
-		for g in goals:
-			if g[0] in self.post.keys() and self.post[g[0]] == g[1]:
-				return True
-		return False
+	def __clone__(self):
+		operator = Operator(self.name)
+		operator.cost = self.cost
+		for k, v in self.pre.iteritems():
+			operator.pre[k] = v
+		for k, v in self.post.iteritems():
+			operator.post[k] = v
+		return operator
 
-	def apply_backward(self, state, goal, variable_sizes):
-		pass # TODO
+	def to_deterministic(self, variable_sizes):
+		operators = [self]
+		for k, v in self.post.iteritems():
+			if k not in self.pre and variable_sizes[k] > 1:
+				temp = []
+				for i in range(0,variable_sizes[k]):
+					if i != v:
+						for op in operators:
+							opx = op.__clone__()
+							opx.pre[k] = i
+							temp.append(opx)
+				operators = temp
+		return operators
+
+	def support(self, goal):
+		supporter = False
+		contradict = False
+		for k, v in self.post.iteritems():
+			if k in goal:
+				if goal[k] == v:
+					supporter = True
+				else:
+					contradict = True
+		for k, v in self.pre.iteritems():
+			if k not in self.post and k in goal:
+				if goal[k] != v:
+					supporter = False
+		return (supporter and not contradict)
+
+	def apply_backward(self, goal, copy=False):
+		for k, v in self.pre.iteritems():
+			goal[k] = v
+		return goal
 
 '''
 	def applicable_forward(self, state):
@@ -67,12 +89,6 @@ class Operator(object):
 class PSP(object):
 	def __init__(self, sas_file):
 		self.parse_file(sas_file)
-
-	def at_goal(self):
-		for g in self.goal:
-			if self.state[g[0]] != g[1]:
-				return False
-		return True
 
 	def parse_file(self, sas_file):
 		def process_version(f):
@@ -125,22 +141,28 @@ class PSP(object):
 		def process_goal(f):
 			if f.readline().strip() != "begin_goal":
 				raise ParseException("missing: begin_goal")
-			goal = [ [int(x) for x in f.readline().split(' ')] for i in range(0,int(f.readline())) ]
+			goal = {}
+			for i in range(0,int(f.readline())):
+				var, val = f.readline().split(' ')
+				goal[int(var)] = int(val)
 			if f.readline().strip() != "end_goal":
 				raise ParseException("missing: end_goal")
 			return goal
 	
-		def process_operators(f):
+		def process_operators(f, variable_sizes):
 			total = int(f.readline())
 			non_deterministic_backward = False
 			operators = []
 			for i in range(0,total):
+				ndb = False
 				if f.readline().strip() != "begin_operator":
 					raise ParseException("missing: begin_operator")
 				operator = Operator(f.readline().strip())
+				# prevail conditions
 				for j in range(0,int(f.readline())):
 					prevail = f.readline().split(' ')
 					operator.pre[int(prevail[0])] = int(prevail[1])
+				# pre-post conditions
 				for j in range(0,int(f.readline())):
 					prepost = f.readline().split(' ')
 					var = int(prepost[1])
@@ -148,14 +170,19 @@ class PSP(object):
 					if pre > -1:
 						operator.pre[var] = pre
 					else:
-						non_deterministic_backward = True
+						non_deterministic_backward = ndb = True
 					operator.post[var] = int(prepost[3])
+				# cost
 				operator.cost = int(f.readline())
-				operators.append(operator)
 				if f.readline().strip() != "end_operator":
 					raise ParseException("missing: end_operator")
+				if ndb:
+					operators += operator.to_deterministic(variable_sizes)
+				else:
+					operators.append(operator)
 			yield operators
-			yield non_deterministic_backward
+			#yield non_deterministic_backward
+			yield False
 
 		with open(sas_file) as f:
 			process_version(f)
@@ -164,23 +191,30 @@ class PSP(object):
 			process_mutex(f)
 			self.state = process_state(f, len(self.variable_names))
 			self.goal = process_goal(f)
-			self.operators, self.non_deterministic_backward = process_operators(f)
+			self.operators, self.non_deterministic_backward = process_operators(f, self.variable_sizes)
 
 		'''print self.state
 		for op in self.operators:
 			print op, op.applicable_backward(self.state)
 		print "non deterministic backward: ", self.non_deterministic_backward'''
 
+	def at_goal(self):
+		for k, v in self.goal.iteritems():
+			if self.state[k] !=  v:
+				return False
+		return True
+
 	def get_flaws(self):
-		flaws = []
-		for g in self.goal:
-			if self.state[g[0]] != g[1]:
-				flaws.append(g)
+		flaws = {}
+		for k, v in self.goal.iteritems():
+			if self.state[k] != v:
+				flaws[k] = v
 		return flaws
 
 	def get_supporters(self):
 		supporters = []
 		flaws = self.get_flaws()
+		#print "flaws:", flaws
 		for operator in self.operators:
 			if operator.support(flaws):
 				supporters.append(operator)
@@ -189,15 +223,26 @@ class PSP(object):
 
 	def plan(self):
 		plan = []
+		print self.goal
+		print self.get_supporters()
 		while not self.at_goal():
 			operators = self.get_supporters()
 			if len(operators) <= 0: # dead-end
-				print "dead-end!"
+				print "dead-end:" #, plan
 				break
 			else:
-				break
+				#print operators
+				self.goal = operators[0].apply_backward(self.goal)
+				#print "apply: ", operators[0]
+				'''print self.goal
+				print self.get_supporters()
+				break'''
+				plan.append(operators[0])
 
-		print "plan:", plan
+		plan = [op for op in reversed(plan)]
+		#print "plan:", plan
+		for op in plan:
+			print op
 
 usage = '''Usage: psp.py <sas-file>
 '''
